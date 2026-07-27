@@ -9,7 +9,7 @@
         "UIPATH_CLIENT_ID": "your-client-id",
         "UIPATH_CLIENT_SECRET": "your-client-secret",
         "UIPATH_ORG_NAME": "your-org-name",
-        "UIPATH_TENANT_NAME": "DefaultTenant"
+        "UIPATH_TENANT_NAME": "your-tenant-name"
       }
     }
   }
