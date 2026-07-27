@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "uipath-storage-buckets": {
+      "command": "C:\\Users\\jesus.lopez\\AppData\\Local\\Programs\\Python\\Python314\\python.exe",
+      "args": [
+        "C:\\Tools\\storage-buckets-mcp\\storage_bucket_server.py"
+      ],
+      "env": {
+        "UIPATH_CLIENT_ID": "your-client-id",
+        "UIPATH_CLIENT_SECRET": "your-client-secret",
+        "UIPATH_ORG_NAME": "your-org-name",
+        "UIPATH_TENANT_NAME": "DefaultTenant"
+      }
+    }
+  }
+}
