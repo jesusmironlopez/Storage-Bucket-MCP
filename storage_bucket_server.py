@@ -15,6 +15,8 @@ SETUP
 import os
 import tempfile
 import time
+import uuid
+import mimetypes
 from typing import Any
 from urllib.parse import quote
 
@@ -110,9 +112,21 @@ def _table_to_markdown(table: list[list[Any]]) -> str:
     return "\n".join(markdown_rows)
 
 
-def _get_bucket_context(bucket_name: str) -> tuple[int, int] | str:
-    """Resolve a bucket name to its ID and one accessible folder ID."""
-    bucket_result = _api_request("GET", "/odata/Buckets")
+def _get_bucket_context(
+    bucket_name: str,
+    folder_id: int | None = None,
+) -> tuple[int, int] | str:
+    """Resolve a bucket name to its ID and an accessible folder ID."""
+    context_headers = (
+        {"X-UIPATH-OrganizationUnitId": str(folder_id)}
+        if folder_id is not None
+        else {}
+    )
+    bucket_result = _api_request(
+        "GET",
+        "/odata/Buckets",
+        headers=context_headers,
+    )
     if isinstance(bucket_result, str):
         return bucket_result
 
@@ -140,6 +154,7 @@ def _get_bucket_context(bucket_name: str) -> tuple[int, int] | str:
         "GET",
         "/odata/Buckets/UiPath.Server.Configuration.OData.GetFoldersForBucket"
         f"(id={bucket_id})",
+        headers=context_headers,
     )
     if isinstance(folders_result, str):
         return folders_result
@@ -155,11 +170,11 @@ def _get_bucket_context(bucket_name: str) -> tuple[int, int] | str:
             f"'{bucket_name}'."
         )
 
-    folder_id = folders[0].get("Id")
-    if folder_id is None:
+    resolved_folder_id = folders[0].get("Id")
+    if resolved_folder_id is None:
         return f"Accessible folder for bucket '{bucket_name}' has no ID."
 
-    return int(bucket_id), int(folder_id)
+    return int(bucket_id), int(resolved_folder_id)
 
 
 def get_access_token() -> str:
@@ -252,13 +267,21 @@ def _api_request(
 
 
 @mcp.tool()
-def list_storage_buckets() -> str:
+def list_storage_buckets(folder_id: int | None = None) -> str:
     """List all storage buckets configured in the UiPath Orchestrator tenant.
+
+    Args:
+        folder_id: optional Orchestrator folder ID used as the request context
 
     Returns each bucket's ID, name, description, and storage provider as a
     clean markdown bullet list.
     """
-    result = _api_request("GET", "/odata/Buckets")
+    headers = (
+        {"X-UIPATH-OrganizationUnitId": str(folder_id)}
+        if folder_id is not None
+        else {}
+    )
+    result = _api_request("GET", "/odata/Buckets", headers=headers)
     if isinstance(result, str):
         return result
 
@@ -278,18 +301,67 @@ def list_storage_buckets() -> str:
 
 
 @mcp.tool()
-def list_files(bucket_name: str, folder_path: str = "/") -> str:
+def create_storage_bucket(
+    bucket_name: str,
+    description: str = "",
+    folder_id: int | None = None,
+) -> str:
+    """Create an Orchestrator-managed storage bucket.
+
+    Args:
+        bucket_name: unique name for the new storage bucket
+        description: optional description for the storage bucket
+        folder_id: optional Orchestrator folder ID where the bucket is created
+
+    Returns a confirmation containing the created bucket's ID and name.
+    """
+    if not bucket_name or not bucket_name.strip():
+        return "Unable to create storage bucket: bucket_name is required."
+
+    payload = {
+        "Name": bucket_name.strip(),
+        "Description": description.strip() or None,
+        "Identifier": str(uuid.uuid4()),
+    }
+    headers = {"Content-Type": "application/json"}
+    if folder_id is not None:
+        headers["X-UIPATH-OrganizationUnitId"] = str(folder_id)
+
+    result = _api_request(
+        "POST",
+        "/odata/Buckets",
+        json=payload,
+        headers=headers,
+    )
+    if isinstance(result, str):
+        return result
+
+    if isinstance(result, dict):
+        created_name = result.get("Name") or payload["Name"]
+        bucket_id = result.get("Id") or result.get("Identifier", "N/A")
+        return f"Storage bucket created successfully: {created_name} (Id: {bucket_id})"
+
+    return f"Storage bucket created successfully: {payload['Name']}"
+
+
+@mcp.tool()
+def list_files(
+    bucket_name: str,
+    folder_path: str = "/",
+    folder_id: int | None = None,
+) -> str:
     """List files in a specific UiPath Storage Bucket folder.
 
     Args:
         bucket_name: name of the storage bucket to search
         folder_path: folder path within the bucket (default "/")
+        folder_id: optional Orchestrator folder ID containing the bucket
 
     Returns each file's ID, name, folder path, size, and last-modified time as
     a markdown list.
     """
     try:
-        context = _get_bucket_context(bucket_name)
+        context = _get_bucket_context(bucket_name, folder_id)
         if isinstance(context, str):
             return context
         bucket_id, folder_id = context
@@ -469,67 +541,83 @@ def read_file(bucket_name: str, file_path: str) -> str:
         return f"Unable to process file: {e}"
 
 
-# @mcp.tool()
-# def upload_file(bucket_name: str, file_path: str, local_file_path: str) -> str:
-#     """Upload a local file to a UiPath Storage Bucket.
-#
-#     Args:
-#         bucket_name: name of the storage bucket to receive the file
-#         file_path: destination path in the bucket, such as
-#             "/reports/Q3.xlsx"
-#         local_file_path: absolute path to the local file to upload
-#
-#     Returns a confirmation containing the destination path and uploaded file
-#     size in bytes.
-#     """
-#     try:
-#         escaped_bucket_name = bucket_name.replace("'", "''")
-#         encoded_file_path = quote(file_path.replace("'", "''"), safe="")
-#         filter_expression = f"StorageBucketName eq '{escaped_bucket_name}'"
-#         encoded_filter = quote(filter_expression, safe="")
-#         result = _api_request(
-#             "GET",
-#             "/odata/StorageBucketFiles("
-#             f"'{encoded_file_path}'"
-#             ")/UiPath.Server.Configuration.OData.GetWriteUrl"
-#             f"?$filter={encoded_filter}",
-#         )
-#     except (TypeError, ValueError) as e:
-#         return f"Unable to get file upload URL: {e}"
-#
-#     if isinstance(result, str):
-#         return result
-#
-#     upload_url = None
-#     required_headers = {}
-#     if isinstance(result, dict):
-#         value = result.get("value")
-#         if isinstance(value, str):
-#             upload_url = value
-#         elif isinstance(value, dict):
-#             upload_url = value.get("Uri") or value.get("Url") or value.get("url")
-#             required_headers = value.get("RequiredHeaders", {}) or {}
-#         upload_url = upload_url or result.get("Uri") or result.get("Url") or result.get("url")
-#         required_headers = required_headers or result.get("RequiredHeaders", {}) or {}
-#
-#     if not upload_url:
-#         return "Unable to get file upload URL: response did not include a URL."
-#
-#     try:
-#         with open(local_file_path, "rb") as input_file:
-#             file_content = input_file.read()
-#         file_size = len(file_content)
-#
-#         response = requests.put(
-#             upload_url,
-#             data=file_content,
-#             headers=required_headers,
-#             timeout=60,
-#         )
-#         response.raise_for_status()
-#         return f"File uploaded successfully to: {file_path} ({file_size} bytes)"
-#     except (OSError, requests.RequestException) as e:
-#         return f"Unable to upload file: {e}"
+@mcp.tool()
+def upload_file(
+    bucket_name: str,
+    file_path: str,
+    local_file_path: str,
+    folder_id: int | None = None,
+) -> str:
+    """Upload a local file to a UiPath Storage Bucket.
+
+    Args:
+        bucket_name: name of the storage bucket to receive the file
+        file_path: destination path in the bucket, such as
+            "/reports/Q3.xlsx"
+        local_file_path: absolute path to the local file to upload
+        folder_id: optional Orchestrator folder ID containing the bucket
+
+    Returns a confirmation containing the destination path and uploaded file
+    size in bytes.
+    """
+    try:
+        context = _get_bucket_context(bucket_name, folder_id)
+        if isinstance(context, str):
+            return context
+        bucket_id, resolved_folder_id = context
+        content_type = (
+            mimetypes.guess_type(local_file_path)[0]
+            or "application/octet-stream"
+        )
+        result = _api_request(
+            "GET",
+            f"/odata/Buckets({bucket_id})/"
+            "UiPath.Server.Configuration.OData.GetWriteUri",
+            params={
+                "path": file_path.lstrip("/"),
+                "contentType": content_type,
+            },
+            headers={
+                "X-UIPATH-OrganizationUnitId": str(resolved_folder_id),
+            },
+        )
+    except (TypeError, ValueError) as e:
+        return f"Unable to get file upload URL: {e}"
+
+    if isinstance(result, str):
+        return result
+
+    upload_url = None
+    upload_method = "PUT"
+    required_headers = {}
+    if isinstance(result, dict):
+        upload_url = result.get("Uri") or result.get("Url") or result.get("url")
+        upload_method = str(result.get("Verb") or "PUT").upper()
+        response_headers = result.get("Headers", {}) or {}
+        keys = response_headers.get("Keys", [])
+        values = response_headers.get("Values", [])
+        required_headers.update(zip(keys, values))
+
+    if not upload_url:
+        return "Unable to get file upload URL: response did not include a URL."
+
+    try:
+        with open(local_file_path, "rb") as input_file:
+            file_content = input_file.read()
+        file_size = len(file_content)
+
+        required_headers.setdefault("Content-Type", content_type)
+        response = requests.request(
+            upload_method,
+            upload_url,
+            data=file_content,
+            headers=required_headers,
+            timeout=60,
+        )
+        response.raise_for_status()
+        return f"File uploaded successfully to: {file_path} ({file_size} bytes)"
+    except (OSError, requests.RequestException) as e:
+        return f"Unable to upload file: {e}"
 
 
 if __name__ == "__main__":

@@ -2,17 +2,18 @@
 
 Connects Claude Desktop to UiPath Orchestrator Storage Buckets through a
 local MCP server. You can list buckets, browse files, read text files,
-download binary files.
+download binary files, create buckets, and upload files losslessly.
 
 ## What you get
 
 - A local MCP server Claude Desktop can query for UiPath Storage Buckets
 - OAuth2 client-credentials authentication with cached access tokens
-- Tools for listing buckets, listing files, and reading files
+- Tools for listing buckets, listing files, reading files, creating buckets,
+  and uploading files
 - PDF, Excel, Word, text, and binary-file handling
 
-The server is currently read-only. Upload and delete operations are not exposed
-as active MCP tools.
+Upload and bucket-creation operations require the appropriate UiPath
+permissions and folder context. Delete operations are not exposed.
 
 Large extracted responses are truncated to protect the MCP response size. The
 complete downloaded file is saved in a local temporary directory and its path
@@ -110,22 +111,26 @@ Because the credentials are supplied by Claude Desktop, use Claude Desktop
 to test an authenticated tool call. For direct authenticated testing, set the
 four variables in the current PowerShell session before running the command.
 
-To smoke-test the available tools using credentials from the Claude Desktop
-config, run:
+To smoke-test authentication, bucket listing, and optionally file listing using
+credentials from the Claude Desktop config, run:
 
 ```powershell
-python test_server.py
+python test_server.py --list-folder-id 1126452
 ```
 
-The script tests authentication, bucket listing, and file listing. Set these
-optional variables to test reading a specific file:
+To include file listing for a specific bucket and path, pass:
 
 ```powershell
-$env:TEST_BUCKET_NAME = "Bank"
-$env:TEST_FOLDER_PATH = "/"
-$env:TEST_FILE_PATH = "/reports/example.pdf"
-python test_server.py
+python test_server.py `
+  --list-folder-id 1126452 `
+  --file-list-bucket-name "devin-context" `
+  --file-list-folder-path "/"
 ```
+
+`--list-folder-id` is required because this UiPath tenant requires a folder
+context. The create-bucket and upload-file test blocks remain commented out in
+`test_server.py`; the MCP tools themselves are active and can be called from
+Claude Desktop.
 
 ### 6. Generate Project instructions
 
@@ -157,9 +162,11 @@ For the generated project instruction file:
 
 | Tool | Description |
 |---|---|
-| `list_storage_buckets()` | List available storage buckets |
-| `list_files(bucket_name, folder_path)` | List files in a bucket folder |
+| `list_storage_buckets(folder_id)` | List available storage buckets in a folder context |
+| `list_files(bucket_name, folder_path, folder_id)` | List files in a bucket folder |
 | `read_file(bucket_name, file_path)` | Return text content or download a binary file locally |
+| `create_storage_bucket(bucket_name, description, folder_id)` | Create an Orchestrator-managed storage bucket |
+| `upload_file(bucket_name, file_path, local_file_path, folder_id)` | Upload a local file to a bucket in binary form |
 
 ## Common issues
 
@@ -167,5 +174,6 @@ For the generated project instruction file:
 |---|---|
 | Server disconnected | Claude resolved a different Python than the one with `mcp` installed; use the full `python.exe` path |
 | Authentication failed | Check all four UiPath environment values and the external application's permissions |
+| Folder required or inaccessible | Supply a valid `folder_id` for the target Orchestrator folder and confirm permissions |
 | Config file will not parse | A comma is missing while merging JSON; validate with `python -m json.tool claude_desktop_config.json` |
 | No buckets or files returned | Confirm the UiPath organization, tenant, and storage-bucket permissions |
